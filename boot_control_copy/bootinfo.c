@@ -64,10 +64,10 @@ int boot_info_open_partition(const char *name, uint64_t *out_size, int flags)
   // every slot partition (it uses the slotselect option to mask the
   // suffix) and |slot| is expected to be of that form, e.g. boot_a.
   //
-  // We can however assume that there's an entry for the /misc mount
-  // point and use that to get the device file for the misc
+  // We can however assume that there's an entry for the /misc or /cache
+  // mount point and use that to get the device file for the misc or cache
   // partition. From there we'll assume that a by-name scheme is used
-  // so we can just replace the trailing "misc" by the given |name|,
+  // so we can just replace the trailing "misc" or "cache" by the given |name|,
   // e.g.
   //
   //   /dev/block/platform/soc.0/7824900.sdhci/by-name/misc ->
@@ -75,31 +75,32 @@ int boot_info_open_partition(const char *name, uint64_t *out_size, int flags)
   //
   // If needed, it's possible to relax this assumption in the future
   // by trawling /sys/block looking for the appropriate sibling of
-  // misc and then finding an entry in /dev matching the sysfs entry.
+  // misc or cache and then finding an entry in /dev matching the sysfs entry.
 
   fstab = open_fstab();
   if (fstab == NULL)
     return -1;
   record = fs_mgr_get_entry_for_mount_point(fstab, "/misc");
   if (record == NULL) {
-    fs_mgr_free_fstab(fstab);
-    return -1;
-  }
-  if (strcmp(name, "misc") == 0) {
-    path = strdup(record->blk_device);
-  } else {
-    size_t trimmed_len, name_len;
-    const char *end_slash = strrchr(record->blk_device, '/');
-    if (end_slash == NULL) {
+    record = fs_mgr_get_entry_for_mount_point(fstab, "/cache");
+    if (record == NULL) {
       fs_mgr_free_fstab(fstab);
       return -1;
     }
-    trimmed_len = end_slash - record->blk_device + 1;
-    name_len = strlen(name);
-    path = calloc(trimmed_len + name_len + 1, 1);
-    strncpy(path, record->blk_device, trimmed_len);
-    strncpy(path + trimmed_len, name, name_len);
   }
+
+  size_t trimmed_len, name_len;
+  const char *end_slash = strrchr(record->blk_device, '/');
+  if (end_slash == NULL) {
+    fs_mgr_free_fstab(fstab);
+    return -1;
+  }
+  trimmed_len = end_slash - record->blk_device + 1;
+  name_len = strlen(name);
+  path = calloc(trimmed_len + name_len + 1, 1);
+  strncpy(path, record->blk_device, trimmed_len);
+  strncpy(path + trimmed_len, name, name_len);
+
   fs_mgr_free_fstab(fstab);
 
   fd = open(path, flags);
@@ -130,8 +131,11 @@ bool boot_info_load(BrilloBootInfo *out_info)
   memset(out_info, '\0', sizeof(BrilloBootInfo));
 
   fd = boot_info_open_partition("misc", NULL, O_RDONLY);
-  if (fd == -1)
-    return false;
+  if (fd == -1) {
+    fd = open("/cache/recovery/brilloboot.info", O_RDONLY);
+    if (fd == -1)
+      return false;
+  }
   if (lseek(fd, BOOTINFO_OFFSET, SEEK_SET) != BOOTINFO_OFFSET) {
     close(fd);
     return false;
@@ -151,8 +155,11 @@ bool boot_info_save(BrilloBootInfo *info)
   int fd;
 
   fd = boot_info_open_partition("misc", NULL, O_RDWR);
-  if (fd == -1)
-    return false;
+  if (fd == -1) {
+    fd = open("/cache/recovery/brilloboot.info", O_RDONLY);
+    if (fd == -1)
+      return false;
+  }
   if (lseek(fd, BOOTINFO_OFFSET, SEEK_SET) != BOOTINFO_OFFSET) {
     close(fd);
     return false;
